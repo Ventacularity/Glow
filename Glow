@@ -12,6 +12,7 @@
 // ================= MATRIX =================
 
 #define PIN 13
+#define BUTTON_PIN 12
 #define WIDTH 8
 #define HEIGHT 8
 #define NUMPIXELS 64
@@ -20,12 +21,12 @@ Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
 byte heartMatrix[8][8] = {
   {0,0,0,0,0,0,0,0},
-  {0,1,1,0,0,1,1,0},
-  {1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1},
-  {0,1,1,1,1,1,1,0},
-  {0,0,1,1,1,1,0,0},
   {0,0,0,1,1,0,0,0},
+  {0,0,1,1,1,1,0,0},
+  {0,1,1,1,1,1,1,0},
+  {1,1,1,1,1,1,1,1},
+  {1,1,1,1,1,1,1,1},
+  {0,1,1,0,0,1,1,0},
   {0,0,0,0,0,0,0,0}
 };
 
@@ -72,6 +73,13 @@ static BLEAdvertisedDevice* myDevice;
 
 volatile int currentBPM = 70;
 
+// ================= STATE =================
+
+bool systemEnabled = true;
+bool lastButtonState = HIGH;
+unsigned long lastBeatTime = 0;
+unsigned long shockwaveStart = 0;
+
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     if (advertisedDevice.haveServiceUUID() &&
@@ -93,29 +101,23 @@ void notifyCallback(
   }
 }
 
-// ================= TIMING =================
-
-unsigned long lastBeatTime = 0;
-unsigned long shockwaveStart = 0;
-
 void setup() {
 
   Serial.begin(115200);
 
-  // MATRIX
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
   delay(1000);
   pixels.begin();
   pixels.setBrightness(40);
   pixels.clear();
   pixels.show();
 
-  // OLED
   Wire.begin(23, 22);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
   display.display();
 
-  // BLE
   BLEDevice::init("");
   BLEScan* pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
@@ -124,6 +126,28 @@ void setup() {
 }
 
 void loop() {
+
+  // ===== BUTTON TOGGLE =====
+  bool buttonState = digitalRead(BUTTON_PIN);
+
+  if (buttonState == LOW && lastButtonState == HIGH) {
+    systemEnabled = !systemEnabled;
+    delay(200);
+  }
+
+  lastButtonState = buttonState;
+
+  if (!systemEnabled) {
+    pixels.clear();
+    pixels.show();
+
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setCursor(20, 25);
+    display.print("PAUSED");
+    display.display();
+    return;
+  }
 
   unsigned long now = millis();
 
@@ -156,39 +180,27 @@ void loop() {
   // ===== OLED DRAW =====
   display.clearDisplay();
 
-  // Pulsing heart
   int heartSize = 8;
   unsigned long dt = now - lastBeatTime;
   if (dt < 120) heartSize = 12;
 
   drawOLEDHeart(35, 28, heartSize);
 
-  // Shockwave
   unsigned long swt = now - shockwaveStart;
   if (swt < 400) {
     int radius = 12 + swt / 8;
     display.drawCircle(35, 28, radius, SSD1306_WHITE);
   }
 
-  // Big BPM number
+  // BIG NUMBER
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(3);
+  display.setCursor(70, 15);
+  display.print(currentBPM);
 
-  String bpmNumber = String(currentBPM);
-
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds(bpmNumber, 0, 0, &x1, &y1, &w, &h);
-
-  int x = 128 - w - 10;
-  int y = 15;
-
-  display.setCursor(x, y);
-  display.print(bpmNumber);
-
-  // Small label
+  // LABEL
   display.setTextSize(1);
-  display.setCursor(x + 5, y + 40);
+  display.setCursor(80, 50);
   display.print("BPM");
 
   display.display();
