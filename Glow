@@ -1,0 +1,195 @@
+#include <Adafruit_NeoPixel.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEClient.h>
+#include <BLERemoteService.h>
+#include <BLERemoteCharacteristic.h>
+
+// ================= MATRIX =================
+
+#define PIN 13
+#define WIDTH 8
+#define HEIGHT 8
+#define NUMPIXELS 64
+
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
+
+byte heartMatrix[8][8] = {
+  {0,0,0,0,0,0,0,0},
+  {0,1,1,0,0,1,1,0},
+  {1,1,1,1,1,1,1,1},
+  {1,1,1,1,1,1,1,1},
+  {0,1,1,1,1,1,1,0},
+  {0,0,1,1,1,1,0,0},
+  {0,0,0,1,1,0,0,0},
+  {0,0,0,0,0,0,0,0}
+};
+
+int getIndex(int x, int y) {
+  if (y % 2 == 0) return y * WIDTH + x;
+  else return y * WIDTH + (WIDTH - 1 - x);
+}
+
+void drawMatrixHeart(int brightness) {
+  pixels.clear();
+  for (int y = 0; y < HEIGHT; y++) {
+    for (int x = 0; x < WIDTH; x++) {
+      if (heartMatrix[y][x]) {
+        int index = getIndex(x, y);
+        pixels.setPixelColor(index, pixels.Color(brightness, 0, 0));
+      }
+    }
+  }
+  pixels.show();
+}
+
+// ================= OLED =================
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+void drawOLEDHeart(int cx, int cy, int size) {
+  display.fillCircle(cx - size/2, cy - size/2, size/2, SSD1306_WHITE);
+  display.fillCircle(cx + size/2, cy - size/2, size/2, SSD1306_WHITE);
+  display.fillTriangle(cx - size, cy - size/4,
+                       cx + size, cy - size/4,
+                       cx, cy + size,
+                       SSD1306_WHITE);
+}
+
+// ================= BLE =================
+
+static BLEUUID serviceUUID((uint16_t)0x180D);
+static BLEUUID charUUID((uint16_t)0x2A37);
+
+static BLERemoteCharacteristic* pRemoteCharacteristic;
+static BLEAdvertisedDevice* myDevice;
+
+volatile int currentBPM = 70;
+
+class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.haveServiceUUID() &&
+        advertisedDevice.isAdvertisingService(serviceUUID)) {
+      myDevice = new BLEAdvertisedDevice(advertisedDevice);
+      BLEDevice::getScan()->stop();
+    }
+  }
+};
+
+void notifyCallback(
+  BLERemoteCharacteristic*,
+  uint8_t* pData,
+  size_t length,
+  bool) {
+
+  if (length > 1) {
+    currentBPM = pData[1];
+  }
+}
+
+// ================= TIMING =================
+
+unsigned long lastBeatTime = 0;
+unsigned long shockwaveStart = 0;
+
+void setup() {
+
+  Serial.begin(115200);
+
+  // MATRIX
+  delay(1000);
+  pixels.begin();
+  pixels.setBrightness(40);
+  pixels.clear();
+  pixels.show();
+
+  // OLED
+  Wire.begin(23, 22);
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  display.display();
+
+  // BLE
+  BLEDevice::init("");
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(true);
+  pBLEScan->start(0, false);
+}
+
+void loop() {
+
+  unsigned long now = millis();
+
+  // BLE connect
+  if (myDevice) {
+    BLEClient* pClient = BLEDevice::createClient();
+    pClient->connect(myDevice);
+
+    BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
+    if (pRemoteService != nullptr) {
+      pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
+      if (pRemoteCharacteristic->canNotify()) {
+        pRemoteCharacteristic->registerForNotify(notifyCallback);
+      }
+    }
+    myDevice = nullptr;
+  }
+
+  int beatInterval = 60000 / currentBPM;
+
+  if (now - lastBeatTime >= beatInterval) {
+    lastBeatTime = now;
+    shockwaveStart = now;
+
+    drawMatrixHeart(200);
+    delay(40);
+    drawMatrixHeart(60);
+  }
+
+  // ===== OLED DRAW =====
+  display.clearDisplay();
+
+  // Pulsing heart
+  int heartSize = 8;
+  unsigned long dt = now - lastBeatTime;
+  if (dt < 120) heartSize = 12;
+
+  drawOLEDHeart(35, 28, heartSize);
+
+  // Shockwave
+  unsigned long swt = now - shockwaveStart;
+  if (swt < 400) {
+    int radius = 12 + swt / 8;
+    display.drawCircle(35, 28, radius, SSD1306_WHITE);
+  }
+
+  // Big BPM number
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(3);
+
+  String bpmNumber = String(currentBPM);
+
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(bpmNumber, 0, 0, &x1, &y1, &w, &h);
+
+  int x = 128 - w - 10;
+  int y = 15;
+
+  display.setCursor(x, y);
+  display.print(bpmNumber);
+
+  // Small label
+  display.setTextSize(1);
+  display.setCursor(x + 5, y + 40);
+  display.print("BPM");
+
+  display.display();
+}
