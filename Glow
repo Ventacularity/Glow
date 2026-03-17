@@ -11,7 +11,7 @@
 
 // ================= MATRIX =================
 
-#define PIN 13
+#define PIN 14
 #define BUTTON_PIN 12
 #define WIDTH 8
 #define HEIGHT 8
@@ -102,7 +102,6 @@ void notifyCallback(
 }
 
 void setup() {
-
   Serial.begin(115200);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -113,7 +112,8 @@ void setup() {
   pixels.clear();
   pixels.show();
 
-  Wire.begin(23, 22);
+  // *** UPDATED FOR FEATHER ESP32 V2 ***
+  Wire.begin(22, 20);  // SDA=22, SCL=20
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
   display.display();
@@ -142,6 +142,7 @@ void loop() {
     pixels.show();
 
     display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
     display.setTextSize(2);
     display.setCursor(20, 25);
     display.print("PAUSED");
@@ -151,7 +152,7 @@ void loop() {
 
   unsigned long now = millis();
 
-  // BLE connect
+  // ===== BLE CONNECT =====
   if (myDevice) {
     BLEClient* pClient = BLEDevice::createClient();
     pClient->connect(myDevice);
@@ -166,6 +167,7 @@ void loop() {
     myDevice = nullptr;
   }
 
+  // ===== BEAT =====
   int beatInterval = 60000 / currentBPM;
 
   if (now - lastBeatTime >= beatInterval) {
